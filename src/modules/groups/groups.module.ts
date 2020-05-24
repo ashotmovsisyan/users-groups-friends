@@ -1,16 +1,13 @@
 import { Module } from '@nestjs/common';
 import { GroupsService } from './groups.service';
 import { GroupsController } from './groups.controller';
-import { MongooseModule } from '@nestjs/mongoose';
-import { GroupSchema } from '../../models/group.model';
-import { UserSchema } from '../../models/user.model';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from '../users/user.entity';
+import { Group } from './group.entity';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: 'Group', schema: GroupSchema },
-      { name: 'User', schema: UserSchema },
-    ])
+    TypeOrmModule.forFeature([User, Group]),
   ],
   controllers: [GroupsController],
   providers: [GroupsService],

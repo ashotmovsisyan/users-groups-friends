@@ -1,142 +1,142 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { User } from '../../models/user.model';
-import { Group } from '../../models/group.model';
+import { Injectable, NotFoundException } from '@nestjs/common';
+
 import { UserCreateDto } from '../../dto/user-create.dto';
 import { UserUpdateDto } from '../../dto/user-update.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Group } from '../groups/group.entity';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
 
 @Injectable()
 export class UsersService {
   constructor(
-    @InjectModel('Group')
-    private groupsModel: Model<Group>,
-    @InjectModel('User')
-    private usersModel: Model<User>,
+    @InjectRepository(Group)
+    private groupRepository: Repository<Group>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
   ) {
   }
 
   async createUser(userCreateDto: UserCreateDto) {
     const { name, age } = userCreateDto;
-    const user = new this.usersModel({ name, age });
-    await user.save();
+    const user = new User();
+    user.name = name;
+    user.age = age;
+    user.friends = [];
+    user.groups = [];
+    await this.userRepository.save(user);
+    const promises = [];
 
     if (userCreateDto.friends) {
-      const friends = await this.getUsersByIds(userCreateDto.friends);
-      await Promise.all(
-        friends.map(friend => {
-          user.friends.push(friend);
+      userCreateDto.friends.forEach(friendId => {
+        promises.push((async () => {
+          const friend = await this.userRepository.findOne(friendId);
+          console.log('f', friend);
+          if (!friend) {
+            return;
+          }
           friend.friends.push(user);
-          return friend.save();
-        }),
-      );
-    }
-    if (userCreateDto.groups) {
-
-      const groups = await this.groupsModel.find({
-        _id: { $in: userCreateDto.groups.map(id => Types.ObjectId(id)) },
+          user.friends.push(friend);
+          return this.userRepository.save(friend);
+        })());
       });
-      await Promise.all(
-        groups.map(group => {
-          user.groups.push(group);
-          group.users.push(user);
-          return group.save();
-        }),
-      );
     }
 
-    await user.save();
+    if (userCreateDto.groups) {
+      userCreateDto.groups.forEach(groupId => {
+        promises.push((async () => {
+          const group = await this.groupRepository.findOne(groupId);
+          console.log('g', group);
+          if (!group) {
+            return;
+          }
+          group.users.push(user);
+          user.groups.push(group);
+          return this.groupRepository.save(group);
+        })());
+      });
+    }
+
+    promises.push(this.userRepository.save(user));
+
+    await Promise.all(promises);
 
     return user;
   }
 
   async getUsers() {
-    return await this.usersModel
-      .find()
-      .populate('friends')
-      .populate('groups')
-      .exec();
+    return this.userRepository.find();
   }
 
   async getUserById(id: string) {
-    return await this.usersModel
-      .findOne({ _id: id })
-      .populate('friends')
-      .populate('groups')
-      .exec();
-  }
+    const user = await this.userRepository
+      .findOne({ _id: id });
 
-  async getUsersByIds(ids: string[]) {
-    return await this.usersModel.find({
-      _id: {
-        $in: ids.map(id => Types.ObjectId(id)),
-      },
-    }).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return user;
   }
 
   async updateUser(id: string, userUpdateDto: UserUpdateDto) {
     const user = await this.getUserById(id);
 
-    if (!user) {
-      return null;
-    }
-
     const { name, age } = userUpdateDto;
 
+    const promises = [];
+
     if (userUpdateDto.friends) {
-      const oldFriends = await this.getUsersByIds(user.friends.map(({ _id }) => _id));
-
-      await Promise.all(
-        oldFriends.map(friend => this.usersModel.findByIdAndUpdate(friend._id, {
-          friends: friend.friends.filter(({ _id }) => _id !== id),
-        }).exec()),
-      );
-
-      const newFriends = await this.getUsersByIds(userUpdateDto.friends);
-
-      await Promise.all(
-        newFriends.map(friend => this.usersModel.findByIdAndUpdate(friend._id, {
-          friends: [...friend.friends.filter(({ _id }) => _id.toString() !== id), user],
-        }).exec()),
-      );
+      user.friends.forEach(friend => {
+        friend.friends = friend.friends.filter(({ _id }) => _id.toString() !== id);
+        promises.push(this.userRepository.save(friend));
+      });
+      user.friends = [];
+      userUpdateDto.friends.forEach(friendId => {
+        promises.push((async () => {
+          const friend = await this.userRepository.findOne(friendId);
+          if (!friend) {
+            return;
+          }
+          friend.friends = friend.friends.filter(({ _id }) => _id.toString() !== id);
+          friend.friends.push(user);
+          user.friends.push(friend);
+          return this.userRepository.save(friend);
+        })());
+      });
     }
 
     if (userUpdateDto.groups) {
-      const oldGroups = await this.groupsModel.find({
-        _id: { $in: user.groups.map(({ _id }) => Types.ObjectId(_id)) },
+      user.groups.forEach(group => {
+        group.users = group.users.filter(({ _id }) => _id.toString() !== id);
+        promises.push(this.groupRepository.save(group));
       });
-
-      await Promise.all(
-        oldGroups.map(group => {
+      user.friends = [];
+      userUpdateDto.groups.forEach(groupId => {
+        promises.push((async () => {
+          const group = await this.groupRepository.findOne(groupId);
+          if (!group) {
+            return;
+          }
           group.users = group.users.filter(({ _id }) => _id.toString() !== id);
-          return group.save();
-        }),
-      );
-
-      const newGroups = await this.groupsModel.find({
-        _id: { $in: userUpdateDto.groups.map(id => Types.ObjectId(id)) },
-      }).populate('users').exec();
-      user.groups = [];
-
-      await Promise.all(
-        newGroups.map(group => {
+          group.users.push(user);
           user.groups.push(group);
-          group.users = [...group.users.filter(({ _id }) => _id.toString() !== id), user];
-          return group.save();
-        }),
-      );
-      await user.save();
+          return this.groupRepository.save(group);
+        })());
+      });
     }
 
-    return this.usersModel.findByIdAndUpdate(id, { name, age });
+    user.name = name;
+    user.age = age;
+    promises.push(this.userRepository.save(user));
+    await Promise.all(promises);
+
+    return user;
   }
 
   async deleteUser(id: string) {
     const user = await this.getUserById(id);
-    if (!user) {
-      return null;
-    }
-    await this.usersModel.deleteOne({ _id: id }).exec();
+    await this.userRepository.delete(user);
     return user;
   }
 }

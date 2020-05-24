@@ -1,19 +1,21 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { GroupSchema } from './models/group.model';
-import { UserSchema } from './models/user.model';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { join } from 'path';
 import { GroupsModule } from './modules/groups/groups.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
-    MongooseModule.forRoot('mongodb://localhost/nest-rest', {
-      useFindAndModify: false,
+    TypeOrmModule.forRoot({
+      type: 'mongodb',
+      url:
+        'mongodb://localhost/nest-rest&retryWrites=true',
+      entities: [join(__dirname, '**/**.entity{.ts,.js}')],
+      synchronize: true,
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      logging: true,
     }),
-    MongooseModule.forFeature([
-      { name: 'Group', schema: GroupSchema },
-      { name: 'User', schema: UserSchema },
-    ]),
     GroupsModule,
     UsersModule,
   ],
